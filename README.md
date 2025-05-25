@@ -14,4 +14,4 @@ Digital D&amp;D Battle Map with drawable terrain and movable tokens
 - Save and import exact map state
 
 # info
-The touchscreen support has been tested on a Samsung Galaxy Tab S4 with an S Pen. In my testing, it has been important to select the drawing tools using a finger instead of the S Pen to avoid weird zooming and panning behavior. If you use your finger for selecting drawing tools, you should be fine drawing normally with your S Pen. Of course your mileage may vary.
+The touchscreen support has been tested on a Samsung Galaxy Tab S4 with an S Pen. In my testing, it has been important to select the drawing tools using a finger instead of the S Pen to avoid weird zooming and panning behavior. If you use your finger to select drawing tools, you should be fine drawing normally with your S Pen. Of course your mileage may vary.
