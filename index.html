@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mapify</title>
+  <style>
+    body, html { margin: 0; padding: 0; overflow: hidden; height: 100%; font-family: sans-serif; }
+    #container { display: flex; height: 100%; }
+    #map { flex: 1; background-color: #f0f0f0; cursor: grab; touch-action: none; }
+    #sidebar {
+      width: 300px;
+      background: #2b2b2b;
+      color: #f0f0f0;
+      padding: 10px;
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+    }
+    button {
+      background: #444;
+      border: none;
+      border-radius: 4px;
+      color: #f0f0f0;
+      padding: 8px;
+      font-size: 0.9em;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    button:hover {
+      background: #555;
+      cursor: pointer;
+    }
+    button.active {
+      background: #666;
+    }
+    #drawMode::before {
+      content: "✏️";
+      margin-right: 6px;
+    }
+    #eraseMode::before {
+      content: "🧹";
+      margin-right: 6px;
+    }
+    #nextTurn::before {
+      content: "➡️";
+      margin-right: 6px;
+    }
+    #recenter::before {
+      content: "🔄";
+      margin-right: 6px;
+    }
+    #lockView::before {
+      content: "🔒";
+      margin-right: 6px;
+    }
+    #unlockView::before {
+      content: "🔓";
+      margin-right: 6px;
+    }
+    button, input[type="file"], select, input[type="text"], input[type="number"] { margin-top: 5px; width: 100%; }
+    button.active { background: #555; }
+    input[type="file"] { display: none; }
+    #tokenList { flex: 1; overflow-y: auto; margin-top: 10px; }
+    .token-item { padding: 4px; border-bottom: 1px solid #333; }
+    .token-header { display: flex; justify-content: space-between; align-items: center; }
+    .token-header.current { font-weight: bold; }
+    .token-header button { width: auto; padding: 2px 6px; font-size: 0.8em; }
+    .effect-item { display: flex; justify-content: space-between; padding: 0 10px; font-size: 0.9em; }
+    .effect-item button { width: auto; padding: 2px 4px; font-size: 0.8em; }
+    #tokenModal { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #fff; padding: 20px; box-shadow: 0 0 10px rgba(0,0,0,0.5); display: none; z-index: 10; width: 300px; }
+    #tokenModal label { display: block; margin: 5px 0; color: #000; }
+    #modalOverlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.3); display: none; z-index: 5; }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <canvas id="map"></canvas>
+    <div id="sidebar">
+      <h2>Mapify</h2>
+      <button id="nextTurn">Next Turn</button>
+      <button id="recenter">Re-Center</button>
+      <button id="lockView">Lock View</button>
+      <button id="drawMode">Draw</button>
+      <button id="eraseMode">Erase</button>
+      <input type="color" id="colorPicker" value="#4CAF50">
+      <button id="exportAll">Export All</button>
+      <button id="importAllBtn">Import All</button>
+      <input type="file" id="importAll" accept="application/json">
+      <button id="addToken">Add Token</button>
+      <div id="tokenList"></div>
+    </div>
+  </div>
+
+  <div id="modalOverlay"></div>
+  <div id="tokenModal">
+    <h3>Token Details</h3>
+    <label>Name: <input type="text" id="modalName"></label>
+    <label>HP: <input type="number" id="modalHPCurrent" style="width:45%;"> / <input type="number" id="modalHPMax" style="width:45%;"></label>
+    <label>Initiative: <input type="number" id="modalInit"></label>
+    <div id="effectsList"></div>
+    <label>Effect Name: <input type="text" id="newEffectName"></label>
+    <label>Duration: <input type="number" id="newEffectDur" style="width:45%;"> <select id="newEffectUnit"><option value="turns">turns</option><option value="rounds">rounds</option></select></label>
+    <button id="addEffectBtn">Add Effect</button>
+    <button id="deleteToken">Delete Token</button>
+    <button id="saveToken">Save</button>
+    <button id="closeModal">Close</button>
+  </div>
+
+  <script>
+    // Setup
+    const canvas = document.getElementById('map'), ctx = canvas.getContext('2d');
+    let width = canvas.width = window.innerWidth - 300, height = canvas.height = window.innerHeight;
+    const gridSize = 50, gridCount = 100;
+    let offsetX, offsetY, zoom = 1;
+    const minZoom = 0.5, maxZoom = 5;
+    let mode = 'pan', isPanning = false, drawing = false, dragging = null, current = null, lockView = false;
+    const terrain = Array.from({ length: gridCount }, () => Array(gridCount).fill(null));
+    let pointers = new Map(), touchState = { isPinching: false, startDist: 0, startZoom: 1, startOffset: {}, startMid: {} };
+    let tokens = [], turnIndex = 0;
+    const tokenList = document.getElementById('tokenList');
+    const overlay = document.getElementById('modalOverlay'), modal = document.getElementById('tokenModal');
+    const mName = document.getElementById('modalName'), mHPc = document.getElementById('modalHPCurrent'), mHPm = document.getElementById('modalHPMax');
+    const mInit = document.getElementById('modalInit'), effList = document.getElementById('effectsList');
+    const eName = document.getElementById('newEffectName'), eDur = document.getElementById('newEffectDur'), eUnit = document.getElementById('newEffectUnit');
+    const drawBtn = document.getElementById('drawMode'), eraseBtn = document.getElementById('eraseMode'), colorPicker = document.getElementById('colorPicker');
+
+    function clampOffset() {
+      const mapW = gridCount * gridSize * zoom;
+      const mapH = gridCount * gridSize * zoom;
+      offsetX = Math.min(Math.max(offsetX, 0), mapW - width);
+      offsetY = Math.min(Math.max(offsetY, 0), mapH - height);
+    }
+    function center() { offsetX = (gridCount/2)*gridSize*zoom - width/2; offsetY = (gridCount/2)*gridSize*zoom - height/2; clampOffset(); }
+    function setMode(m) { mode = m; drawBtn.classList.toggle('active', m==='draw'); eraseBtn.classList.toggle('active', m==='erase'); canvas.style.cursor = m==='pan'?'grab':'crosshair'; }
+
+    function draw() {
+      ctx.clearRect(0,0,width,height);
+      const s = gridSize*zoom;
+      const sx = Math.floor(offsetX/s), sy = Math.floor(offsetY/s);
+      const ex = Math.ceil((offsetX+width)/s), ey = Math.ceil((offsetY+height)/s);
+      ctx.lineWidth = 1;
+      for (let y = sy; y < ey; y++) {
+        for (let x = sx; x < ex; x++) {
+          const px = x*s - offsetX, py = y*s - offsetY;
+          ctx.fillStyle = terrain[y][x] || '#f0eee0'; ctx.fillRect(px,py,s,s);
+          ctx.strokeStyle = '#ccc'; ctx.strokeRect(px,py,s,s);
+        }
+      }
+      drawTokens();
+    }
+    function redraw() { draw(); }
+
+    function drawTokens() {
+      tokens.forEach((t,i) => {
+        const s = gridSize*zoom;
+        const px = t.x*s - offsetX, py = t.y*s - offsetY;
+        ctx.beginPath(); ctx.arc(px+s/2,py+s/2,s/2.5,0,2*Math.PI);
+        ctx.fillStyle = t.color; ctx.fill();
+        ctx.lineWidth = (i===turnIndex)?3:1; ctx.strokeStyle = (i===turnIndex)?'yellow':'black'; ctx.stroke();
+        ctx.fillStyle = 'white'; ctx.font = '12px sans-serif'; ctx.textAlign = 'center';
+        ctx.fillText(t.name.substring(0,2).toUpperCase(), px+s/2, py+s/2+4);
+      });
+    }
+
+    function refresh() {
+      tokenList.innerHTML=''; tokens.sort((a,b)=>b.initiative-a.initiative).forEach((t,i)=>{
+        const div = document.createElement('div'); div.className='token-item';
+        const hdr = document.createElement('div'); hdr.className='token-header'+(i===turnIndex?' current':''); hdr.onclick=()=>openModal(t.id);
+        const txt = document.createElement('span'); txt.textContent=`${t.name} (${t.hpCurrent}/${t.hpMax}) Init: ${t.initiative}`;
+        const dmg = document.createElement('button'); dmg.textContent='DMG'; dmg.onclick=ev=>{ev.stopPropagation();const a=parseInt(prompt('Damage?','0'))||0;t.hpCurrent=Math.max(0,t.hpCurrent-a);refresh();redraw();};
+        hdr.append(txt,dmg); div.append(hdr);
+        t.effects.forEach((e,idx)=>{ const ef=document.createElement('div'); ef.className='effect-item'; const el=document.createElement('span'); el.textContent=`${e.name}: ${e.duration}`; const xb=document.createElement('button'); xb.textContent='×'; xb.onclick=ev=>{ev.stopPropagation();t.effects.splice(idx,1);refresh();}; ef.append(el,xb); div.append(ef);} );
+        tokenList.append(div);
+      });
+    }
+
+    function openModal(id) { current=tokens.find(x=>x.id===id); document.getElementById('modalName').value=current.name; document.getElementById('modalHPCurrent').value=current.hpCurrent; document.getElementById('modalHPMax').value=current.hpMax; document.getElementById('modalInit').value=current.initiative; eName.value=''; eDur.value=''; eUnit.value='turns'; renderEffects(); overlay.style.display=modal.style.display='block'; }
+    function closeModal() { overlay.style.display=modal.style.display='none'; current=null; }
+    function renderEffects(){ effList.innerHTML=''; current.effects.forEach(e=>{ const d=document.createElement('div'); d.textContent=`${e.name}: ${e.duration} (${e.unit})`; effList.append(d); }); }
+
+    function applyTool(mx,my) { const x=Math.floor((mx+offsetX)/(gridSize*zoom)), y=Math.floor((my+offsetY)/(gridSize*zoom)); if(x>=0&&x<gridCount&&y>=0&&y<gridCount){ if(mode==='draw')terrain[y][x]=colorPicker.value; if(mode==='erase')terrain[y][x]=null; redraw(); }}
+
+    // Pointer events
+    function getDist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);} function getMid(a,b){return{x:(a.x+b.x)/2,y:(a.y+b.y)/2};}
+    canvas.addEventListener('pointerdown', e=>{ canvas.setPointerCapture(e.pointerId); if(lockView)return; pointers.set(e.pointerId,{x:e.clientX,y:e.clientY}); if(pointers.size===2){const [p1,p2]=[...pointers.values()]; touchState.isPinching=true; touchState.startDist=getDist(p1,p2); touchState.startZoom=zoom; touchState.startMid=getMid(p1,p2); touchState.startOffset={x:offsetX,y:offsetY};}else{const rect=canvas.getBoundingClientRect(),mx=e.clientX-rect.left,my=e.clientY-rect.top; if(mode==='draw'||mode==='erase'){drawing=true;applyTool(mx,my);}else{const hit=tokens.find(t=>{const s=gridSize*zoom,px=t.x*s-offsetX,py=t.y*s-offsetY;return mx>px&&mx<px+s&&my>py&&my<py+s;}); if(hit)dragging=hit;else{isPanning=true;startPan={x:e.clientX,y:e.clientY};canvas.style.cursor='grabbing';}}}});
+    canvas.addEventListener('pointermove', e=>{ if(lockView)return; if (touchState.isPinching && pointers.size===2) {
+        // pinch-to-zoom around gesture center
+        pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+        const [p1, p2] = [...pointers.values()];
+        const newDist = getDist(p1, p2);
+        const scale = newDist / touchState.startDist;
+        let newZoom = touchState.startZoom * scale;
+        newZoom = Math.min(maxZoom, Math.max(minZoom, newZoom));
+        const mid = getMid(p1, p2);
+        const mapX = (mid.x + touchState.startOffset.x) / touchState.startZoom;
+        const mapY = (mid.y + touchState.startOffset.y) / touchState.startZoom;
+        zoom = newZoom;
+        offsetX = mapX * zoom - mid.x;
+        offsetY = mapY * zoom - mid.y;
+        clampOffset();
+        redraw();
+      } else { const rect=canvas.getBoundingClientRect(),mx=e.clientX-rect.left,my=e.clientY-rect.top; if(isPanning&&mode==='pan'){ offsetX-=(e.clientX-startPan.x)/zoom; offsetY-=(e.clientY-startPan.y)/zoom; clampOffset(); startPan={x:e.clientX,y:e.clientY}; redraw(); } if(drawing&&(mode==='draw'||mode==='erase')) applyTool(mx,my); if(dragging){ const s=gridSize*zoom; const nx=Math.floor((mx+offsetX)/s),ny=Math.floor((my+offsetY)/s); if(nx>=0&&nx<gridCount)dragging.x=nx; if(ny>=0&&ny<gridCount)dragging.y=ny; refresh();redraw(); } pointers.set(e.pointerId,{x:e.clientX,y:e.clientY}); }});
+    canvas.addEventListener('pointerup', e=>{ canvas.releasePointerCapture(e.pointerId); pointers.delete(e.pointerId); if(pointers.size<2)touchState.isPinching=false; if(pointers.size===0){isPanning=drawing=false;dragging=null;setMode(mode);} });
+
+    // Wheel zoom
+    canvas.addEventListener('wheel', e=>{ if(lockView)return; const f=1.1,mx=e.clientX,my=e.clientY; const mapX=(mx+offsetX)/zoom,mapY=(my+offsetY)/zoom; zoom*=(e.deltaY<0?f:1/f); zoom=Math.min(maxZoom,Math.max(minZoom,zoom)); offsetX=mapX*zoom-mx; offsetY=mapY*zoom-my; clampOffset(); redraw(); e.preventDefault(); });
+
+    // Controls
+    document.getElementById('nextTurn').onclick = ()=>{ tokens.forEach(tok=>tok.effects=tok.effects.filter(e=>{ if(e.unit==='turns'){e.duration--;return e.duration>0;}return true;})); turnIndex=(turnIndex+1)%tokens.length; tokens[turnIndex].effects=tokens[turnIndex].effects.filter(e=>{ if(e.unit==='rounds'){e.duration--;return e.duration>0;}return true;}); refresh();redraw(); };
+    document.getElementById('recenter').onclick = ()=>{ center();redraw(); };
+    document.getElementById('lockView').onclick = e=>{ lockView=!lockView; e.target.textContent=lockView?'Unlock View':'Lock View'; };
+    drawBtn.onclick = ()=>setMode(mode==='draw'?'pan':'draw'); eraseBtn.onclick = ()=>setMode(mode==='erase'?'pan':'erase');
+    document.getElementById('addToken').onclick = ()=>{ const tx=Math.floor((width/2+offsetX)/(gridSize*zoom)),ty=Math.floor((height/2+offsetY)/(gridSize*zoom)); tokens.push({id:Date.now(),x:tx,y:ty,name:'Token',hpCurrent:10,hpMax:10,initiative:0,effects:[],color:`hsl(${Math.random()*360},60%,50%)`});refresh();redraw(); };
+    document.getElementById('exportAll').onclick = ()=>{ const data={terrain,tokens,turnIndex}; const b=new Blob([JSON.stringify(data)],{type:'application/json'}),u=URL.createObjectURL(b),a=document.createElement('a'); a.href=u; a.download='map_state.json'; a.click(); URL.revokeObjectURL(u); };
+    document.getElementById('importAllBtn').onclick = ()=>document.getElementById('importAll').click(); document.getElementById('importAll').onchange = e=>{ const f=e.target.files[0]; if(!f)return; const r=new FileReader(); r.onload = ev=>{ try{ const obj=JSON.parse(ev.target.result); obj.terrain.forEach((row,y)=>row.forEach((c,x)=>terrain[y][x]=c)); tokens=obj.tokens; turnIndex=obj.turnIndex||0; refresh();redraw(); }catch{} }; r.readAsText(f); };
+    document.getElementById('addEffectBtn').onclick = ()=>{ const name=eName.value.trim(),dur=parseInt(eDur.value),unit=eUnit.value; if(name&&dur>0){ current.effects.push({name,duration:dur,unit}); eName.value='';eDur.value=''; refresh();renderEffects(); }};
+    document.getElementById('deleteToken').onclick = ()=>{ tokens=tokens.filter(t=>t!==current); closeModal();refresh();redraw(); };
+    document.getElementById('saveToken').onclick = ()=>{ current.name=document.getElementById('modalName').value; current.hpCurrent=parseInt(document.getElementById('modalHPCurrent').value); current.hpMax=parseInt(document.getElementById('modalHPMax').value); current.initiative=parseInt(document.getElementById('modalInit').value); refresh();closeModal();redraw(); };
+    document.getElementById('closeModal').onclick = closeModal;
+
+    // Initialize
+    center(); setMode('pan'); refresh(); redraw();
+    window.onresize = ()=>{ width=canvas.width=window.innerWidth-300; height=canvas.height=window.innerHeight; center();redraw(); };
+  </script>
+</body>
+</html>
+
