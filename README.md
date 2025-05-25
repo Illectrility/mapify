@@ -21,4 +21,4 @@ Digital D&amp;D Battle Map with drawable terrain and movable tokens
 - Zoom using scrolling or pinching on a touchscreen
 
 # info
-The touchscreen support has been tested on a Samsung Galaxy Tab S4 with an S Pen. In my testing, it has been important to select the drawing tools using a finger instead of the S Pen to avoid weird zooming and panning behavior. If you use your finger to select drawing tools, you should be fine drawing normally with your S Pen
+The touchscreen support has been tested on a Samsung Galaxy Tab S4 with an S Pen. In my testing, the S Pen has been causing some unexpected behavior in some brothers (e.g. Via). Using Firefox, it worked without issues. So if you are experiencing issues with using an S Pen, try switching browsers or use a finger instead.
