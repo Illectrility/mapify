@@ -20,5 +20,5 @@ Digital D&amp;D Battle Map with drawable terrain and movable tokens
 - When wanting to switch from pen to eraser, you need not deactivate the pen to activate the eraser, you can press the eraser button directly and vice versa
 - Zoom using scrolling or pinching on a touchscreen
 
-# Touchscreen and S Pen
+# touchscreen and s pen
 The touchscreen support has been tested on a Samsung Galaxy Tab S4 with an S Pen. In my testing, the S Pen has been causing some unexpected behavior in some browsers (e.g. Via). Using Firefox, it worked without issues. So if you are experiencing issues with using an S Pen, try switching browsers or use a finger instead.
